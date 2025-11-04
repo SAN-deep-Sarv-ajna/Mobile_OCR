@@ -60,8 +60,12 @@ export async function extractItemsAndRates(base64Image: string, mimeType: string
   } catch (error) {
     console.error("Error calling Gemini API:", error);
     if (error instanceof SyntaxError) {
-        throw new Error("Failed to process the response from the AI. The handwriting may be too complex.")
+        throw new Error("Failed to process the AI's response. The handwriting might be illegible or in an unexpected format.");
     }
-    throw new Error("Failed to convert handwriting. Please try again with a clearer image.");
+    // Make the error from the AI service more visible to the user for debugging.
+    if (error instanceof Error) {
+        throw new Error(`AI service error: ${error.message}`);
+    }
+    throw new Error("An unknown error occurred while converting the image. Please try again.");
   }
 }
