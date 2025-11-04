@@ -1,12 +1,5 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
-
-const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-  throw new Error("API_KEY environment variable is not set.");
-}
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 export interface Item {
   item: string;
@@ -14,6 +7,12 @@ export interface Item {
 }
 
 export async function extractItemsAndRates(base64Image: string, mimeType: string): Promise<Item[]> {
+  const API_KEY = process.env.API_KEY;
+  if (!API_KEY) {
+    throw new Error("API key is not available. Please select an API key.");
+  }
+  const ai = new GoogleGenAI({ apiKey: API_KEY });
+
   try {
     const imagePart = {
       inlineData: {
@@ -58,14 +57,11 @@ export async function extractItemsAndRates(base64Image: string, mimeType: string
     return result;
 
   } catch (error) {
-    console.error("Error calling Gemini API:", error);
+    console.error("Error during handwriting conversion:", error);
     if (error instanceof SyntaxError) {
         throw new Error("Failed to process the AI's response. The handwriting might be illegible or in an unexpected format.");
     }
-    // Make the error from the AI service more visible to the user for debugging.
-    if (error instanceof Error) {
-        throw new Error(`AI service error: ${error.message}`);
-    }
-    throw new Error("An unknown error occurred while converting the image. Please try again.");
+    // Re-throw other errors so the UI can handle them, especially API key errors.
+    throw error;
   }
 }
