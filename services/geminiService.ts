@@ -1,5 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
+import { getApiKey } from '../utils/fileUtils';
 
 export interface Item {
   item: string;
@@ -7,11 +8,14 @@ export interface Item {
 }
 
 export async function extractItemsAndRates(base64Image: string, mimeType: string): Promise<Item[]> {
-  const API_KEY = process.env.API_KEY;
-  if (!API_KEY) {
-    throw new Error("API key is not available. Please select an API key.");
+  // @ts-ignore
+  const isAistudioEnv = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
+  const apiKey = isAistudioEnv ? process.env.API_KEY : getApiKey();
+
+  if (!apiKey) {
+    throw new Error("API key is not available. Please select or enter an API key.");
   }
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
 
   try {
     const imagePart = {
