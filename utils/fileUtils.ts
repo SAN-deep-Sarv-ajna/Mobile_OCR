@@ -1,4 +1,3 @@
-
 export const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -19,18 +18,18 @@ export const fileToBase64 = (file: File): Promise<string> => {
 
 // --- API Key Management for non-AI Studio environments ---
 
-const API_KEY_SESSION_STORAGE_KEY = 'gemini-api-key';
+const API_KEY_LOCAL_STORAGE_KEY = 'gemini-api-key';
 
 export const setApiKey = (apiKey: string): void => {
-  sessionStorage.setItem(API_KEY_SESSION_STORAGE_KEY, apiKey);
+  localStorage.setItem(API_KEY_LOCAL_STORAGE_KEY, apiKey);
 };
 
 export const getApiKey = (): string | null => {
-  return sessionStorage.getItem(API_KEY_SESSION_STORAGE_KEY);
+  return localStorage.getItem(API_KEY_LOCAL_STORAGE_KEY);
 };
 
 export const clearApiKey = (): void => {
-  sessionStorage.removeItem(API_KEY_SESSION_STORAGE_KEY);
+  localStorage.removeItem(API_KEY_LOCAL_STORAGE_KEY);
 };
 
 export const hasApiKey = (): boolean => {
