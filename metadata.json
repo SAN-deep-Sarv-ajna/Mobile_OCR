@@ -1,5 +1,5 @@
 {
   "name": "Ink to Text Converter",
   "description": "A web application that converts handwritten text from an image into digital text, allowing users to customize the color and format of the output. Powered by the Gemini API.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["camera"]
 }
