@@ -108,27 +108,28 @@ const App: React.FC = () => {
     setIsAistudioEnv(hasAistudio);
 
     const checkKey = async () => {
-      // Priority 1: Environment variable (for Vercel, Netlify, etc.)
+      // Priority 1: Use a key from local storage if it exists (manual entry)
+      const storedKey = getApiKey();
+      if (storedKey) {
+          setActiveApiKey(storedKey);
+          setIsKeyReady(true);
+          return;
+      }
+
+      // Priority 2: Environment variable (for Vercel, Netlify, etc.)
       if (process.env.API_KEY) {
         setActiveApiKey(process.env.API_KEY);
         setIsKeyReady(true);
         return;
       }
       
-      // Priority 2: AI Studio environment
+      // Priority 3: AI Studio environment
       if (hasAistudio) {
         // @ts-ignore
         const hasKey = await window.aistudio.hasSelectedApiKey();
         if (hasKey) {
             // The key is injected into process.env.API_KEY by AI Studio
             setActiveApiKey(process.env.API_KEY);
-            setIsKeyReady(true);
-        }
-      } else {
-        // Priority 3: localStorage for manual key entry
-        const storedKey = getApiKey();
-        if (storedKey) {
-            setActiveApiKey(storedKey);
             setIsKeyReady(true);
         }
       }
