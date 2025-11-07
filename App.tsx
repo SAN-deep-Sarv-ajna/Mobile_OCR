@@ -7,19 +7,19 @@ import { ImageUploader } from './components/ImageUploader';
 import { Controls } from './components/Controls';
 import { OutputBox } from './components/OutputBox';
 import { extractContentFromImage, Item } from './services/geminiService';
-import { fileToBase64, hasApiKey, setApiKey, clearApiKey } from './utils/fileUtils';
+import { fileToBase64, hasApiKey, setApiKey, clearApiKey, getApiKey } from './utils/fileUtils';
 
 // A new component for the API Key selection screen
 const ApiKeySelectionScreen = ({ 
   onSelect, 
   onSave,
   isManualMode,
-  hasError 
+  errorMessage 
 }: { 
   onSelect: () => void, 
   onSave: (key: string) => void,
   isManualMode: boolean,
-  hasError: boolean 
+  errorMessage: string | null 
 }) => {
     const [manualKey, setManualKey] = useState('');
     
@@ -37,9 +37,9 @@ const ApiKeySelectionScreen = ({
                 <p className="text-slate-400 mb-6">
                     To use the Ink to Text Converter, you need a Google AI API key.
                 </p>
-                {hasError && (
+                {errorMessage && (
                     <p className="text-red-400 bg-red-900/30 p-3 rounded-md mb-6 text-sm">
-                        The provided API key was not valid. Please try again.
+                        {errorMessage}
                     </p>
                 )}
                 {isManualMode ? (
@@ -83,7 +83,8 @@ const ApiKeySelectionScreen = ({
 const App: React.FC = () => {
   const [isAistudioEnv, setIsAistudioEnv] = useState(false);
   const [isKeyReady, setIsKeyReady] = useState(false);
-  const [apiKeyError, setApiKeyError] = useState(false);
+  const [activeApiKey, setActiveApiKey] = useState<string | null>(null);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [isShareApiAvailable, setIsShareApiAvailable] = useState<boolean>(false);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -101,25 +102,35 @@ const App: React.FC = () => {
   const [isItalic, setIsItalic] = useState<boolean>(false);
 
   useEffect(() => {
-    // Check for API key in a specific order: env variable, AI Studio, then localStorage.
+    // Determine which environment we are in first.
+    // @ts-ignore
+    const hasAistudio = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
+    setIsAistudioEnv(hasAistudio);
+
     const checkKey = async () => {
       // Priority 1: Environment variable (for Vercel, Netlify, etc.)
       if (process.env.API_KEY) {
+        setActiveApiKey(process.env.API_KEY);
         setIsKeyReady(true);
         return;
       }
       
       // Priority 2: AI Studio environment
-      // @ts-ignore
-      const hasAistudio = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
-      setIsAistudioEnv(hasAistudio);
       if (hasAistudio) {
         // @ts-ignore
         const hasKey = await window.aistudio.hasSelectedApiKey();
-        setIsKeyReady(hasKey);
+        if (hasKey) {
+            // The key is injected into process.env.API_KEY by AI Studio
+            setActiveApiKey(process.env.API_KEY);
+            setIsKeyReady(true);
+        }
       } else {
         // Priority 3: localStorage for manual key entry
-        setIsKeyReady(hasApiKey());
+        const storedKey = getApiKey();
+        if (storedKey) {
+            setActiveApiKey(storedKey);
+            setIsKeyReady(true);
+        }
       }
     };
     checkKey();
@@ -137,16 +148,18 @@ const App: React.FC = () => {
     if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
         // @ts-ignore
         await window.aistudio.openSelectKey();
-        // Optimistically set to true to avoid race conditions
+        // After selection, AI Studio injects the key into the environment.
+        setActiveApiKey(process.env.API_KEY || null);
         setIsKeyReady(true);
-        setApiKeyError(false); // Clear previous API key errors
+        setApiKeyError(null);
     }
   };
   
   const handleSaveKey = (key: string) => {
-    setApiKey(key);
+    setApiKey(key); // to localStorage
+    setActiveApiKey(key); // to state
     setIsKeyReady(true);
-    setApiKeyError(false);
+    setApiKeyError(null);
   };
 
   const handleImageSelect = (file: File) => {
@@ -167,6 +180,11 @@ const App: React.FC = () => {
       setError('Please upload an image first.');
       return;
     }
+    if (!activeApiKey) {
+      setError('API Key is missing. Please refresh and provide a key.');
+      setIsKeyReady(false);
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
@@ -177,28 +195,25 @@ const App: React.FC = () => {
     try {
       const base64Image = await fileToBase64(imageFile);
       const mimeType = imageFile.type;
-      const result = await extractContentFromImage(base64Image, mimeType);
+      const result = await extractContentFromImage(base64Image, mimeType, activeApiKey);
       setConvertedItems(result.items);
       setHeaderText(result.headerText);
       setFooterText(result.footerText);
-      setApiKeyError(false); // Reset error state on success
+      setApiKeyError(null);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       
-      if (errorMessage.includes('API key not valid')) {
-          // If the key is from an env var, it's a configuration issue. Show a persistent error.
-          if (process.env.API_KEY) {
-              setError("The API key provided via the environment variable is invalid.");
-              setApiKeyError(true);
-          } else {
-              // Otherwise, the key is from AI Studio or localStorage. Prompt the user again.
-              if (!isAistudioEnv) {
-                  clearApiKey(); // Clear bad key from localStorage
-              }
-              setIsKeyReady(false);
-              setApiKeyError(true);
-              setError(null); // Clear the generic error to show the key selection screen
-          }
+      const isApiKeyError = errorMessage.includes('API key not valid') || 
+                            errorMessage.includes('API key is not available') ||
+                            /API key (.*?) not found/.test(errorMessage) ||
+                            errorMessage.includes('provide one');
+
+      if (isApiKeyError) {
+          setIsKeyReady(false);
+          setActiveApiKey(null);
+          clearApiKey(); // Always clear a potentially bad manual key.
+          setError(null);
+          setApiKeyError("Your API key is invalid or missing. Please select or enter a valid key to continue.");
       } else {
           setError(errorMessage);
       }
@@ -206,7 +221,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [imageFile, isAistudioEnv]);
+  }, [imageFile, activeApiKey]);
 
   const generatePdfDoc = useCallback((): jsPDF => {
     const doc = new jsPDF();
@@ -222,10 +237,6 @@ const App: React.FC = () => {
     else if (isBold) fontStyle = 'bold';
     else if (isItalic) fontStyle = 'italic';
     
-    // For PDF readability, always use a high-contrast dark color for the text,
-    // regardless of the UI color selection from the color picker. This fixes
-    // the bug where white text was being rendered on a white background,
-    // making it invisible.
     const rgbTextColor: [number, number, number] = [40, 40, 40];
     
     const margins = { left: 15, right: 15, top: 32 };
@@ -318,8 +329,6 @@ const App: React.FC = () => {
         isAutoTableCalled = true;
     }
 
-    // If no content was drawn at all, the page chrome (header/footer) would be missing.
-    // This call ensures that the hooks are always run at least once.
     if (!isAutoTableCalled) {
          autoTable(doc, {
             startY,
@@ -360,7 +369,7 @@ const App: React.FC = () => {
   const hasContent = convertedItems.length > 0 || !!headerText || !!footerText;
 
   if (!isKeyReady) {
-    return <ApiKeySelectionScreen onSelect={handleSelectKey} onSave={handleSaveKey} isManualMode={!isAistudioEnv} hasError={apiKeyError} />;
+    return <ApiKeySelectionScreen onSelect={handleSelectKey} onSave={handleSaveKey} isManualMode={!isAistudioEnv} errorMessage={apiKeyError} />;
   }
 
 

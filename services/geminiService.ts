@@ -1,20 +1,18 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { getApiKey } from '../utils/fileUtils';
 
 export interface Item {
   item: string;
   rate: string;
 }
 
-export async function extractContentFromImage(base64Image: string, mimeType: string): Promise<{ items: Item[]; headerText: string; footerText: string; }> {
-  // Unified API key logic.
-  // Priority 1: Environment variable (from AI Studio, Vercel, etc.).
-  // Priority 2: Fallback to user-provided key in localStorage.
-  const apiKey = process.env.API_KEY || getApiKey();
-
+export async function extractContentFromImage(
+  base64Image: string, 
+  mimeType: string, 
+  apiKey: string
+): Promise<{ items: Item[]; headerText: string; footerText: string; }> {
   if (!apiKey) {
-    throw new Error("API key is not available. Please provide one via environment variables or the manual input screen.");
+    throw new Error("API key was not provided for the conversion.");
   }
   const ai = new GoogleGenAI({ apiKey });
 
