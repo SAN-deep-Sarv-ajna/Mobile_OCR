@@ -1,8 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
 import { Item } from '../services/geminiService';
 
 interface OutputBoxProps {
   items: Item[];
+  headerText: string;
+  footerText: string;
   isLoading: boolean;
   error: string | null;
   textColor: string;
@@ -25,6 +28,8 @@ const CheckIcon = () => (
 
 export const OutputBox: React.FC<OutputBoxProps> = ({
   items,
+  headerText,
+  footerText,
   isLoading,
   error,
   textColor,
@@ -42,9 +47,17 @@ export const OutputBox: React.FC<OutputBoxProps> = ({
   }, [isCopied]);
 
   const handleCopy = () => {
+    const parts = [];
+    if (headerText) parts.push(headerText);
     if (items && items.length > 0) {
-      const textToCopy = items.map(i => `${i.item}\t₹${i.rate}`).join('\n');
-      navigator.clipboard.writeText(textToCopy);
+      parts.push(items.map(i => `${i.item}\t₹${i.rate}`).join('\n'));
+    }
+    if (footerText) parts.push(footerText);
+    
+    const textToCopy = parts.join('\n\n');
+
+    if(textToCopy.trim()){
+      navigator.clipboard.writeText(textToCopy.trim());
       setIsCopied(true);
     }
   };
@@ -60,6 +73,19 @@ export const OutputBox: React.FC<OutputBoxProps> = ({
     isBold ? 'font-bold' : 'font-normal',
     isItalic ? 'italic' : 'not-italic',
   ].join(' ');
+
+  const hasContent = items.length > 0 || !!headerText || !!footerText;
+  
+  const renderTextWithLineBreaks = (text: string) => (
+    <p>
+      {text.split('\n').map((line, index, array) => (
+        <React.Fragment key={index}>
+          {line}
+          {index < array.length - 1 && <br />}
+        </React.Fragment>
+      ))}
+    </p>
+  );
 
   const renderContent = () => {
     if (isLoading) {
@@ -82,31 +108,37 @@ export const OutputBox: React.FC<OutputBoxProps> = ({
       );
     }
     
-    if (!items || items.length === 0) {
+    if (!hasContent) {
       return (
         <div className="flex items-center justify-center h-full text-slate-500">
-          <p>Your converted items will appear here.</p>
+          <p>Your converted content will appear here.</p>
         </div>
       );
     }
     
     return (
-      <table className={`w-full text-left ${styleClasses}`} style={{ color: textColor }}>
-        <thead>
-          <tr className="border-b border-slate-600">
-            <th className="p-2">Item Name</th>
-            <th className="p-2 text-right">Rate (₹)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item, index) => (
-            <tr key={index} className="border-b border-slate-700 last:border-b-0">
-              <td className="p-2">{item.item}</td>
-              <td className="p-2 text-right">{item.rate}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className={styleClasses} style={{ color: textColor }}>
+        {headerText && <div className="mb-4">{renderTextWithLineBreaks(headerText)}</div>}
+        {items && items.length > 0 && (
+            <table className="w-full text-left">
+                <thead>
+                <tr className="border-b border-slate-600">
+                    <th className="p-2">Item Name</th>
+                    <th className="p-2 text-right">Rate (₹)</th>
+                </tr>
+                </thead>
+                <tbody>
+                {items.map((item, index) => (
+                    <tr key={index} className="border-b border-slate-700 last:border-b-0">
+                    <td className="p-2">{item.item}</td>
+                    <td className="p-2 text-right">{item.rate}</td>
+                    </tr>
+                ))}
+                </tbody>
+            </table>
+        )}
+        {footerText && <div className="mt-4">{renderTextWithLineBreaks(footerText)}</div>}
+      </div>
     );
   };
   
@@ -115,7 +147,7 @@ export const OutputBox: React.FC<OutputBoxProps> = ({
       <div className="flex-grow p-4 overflow-auto">
         {renderContent()}
       </div>
-       {items && items.length > 0 && !isLoading && !error && (
+       {hasContent && !isLoading && !error && (
         <button
           onClick={handleCopy}
           className="absolute top-2 right-2 p-2 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"

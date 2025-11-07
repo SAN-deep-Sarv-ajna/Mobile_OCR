@@ -6,7 +6,7 @@ import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
 import { Controls } from './components/Controls';
 import { OutputBox } from './components/OutputBox';
-import { extractItemsAndRates, Item } from './services/geminiService';
+import { extractContentFromImage, Item } from './services/geminiService';
 import { fileToBase64, hasApiKey, setApiKey, clearApiKey } from './utils/fileUtils';
 
 // A new component for the API Key selection screen
@@ -89,6 +89,8 @@ const App: React.FC = () => {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [convertedItems, setConvertedItems] = useState<Item[]>([]);
+  const [headerText, setHeaderText] = useState<string>('');
+  const [footerText, setFooterText] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -99,16 +101,24 @@ const App: React.FC = () => {
   const [isItalic, setIsItalic] = useState<boolean>(false);
 
   useEffect(() => {
-    // @ts-ignore
-    const hasAistudio = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
-    setIsAistudioEnv(hasAistudio);
-    
+    // Check for API key in a specific order: env variable, AI Studio, then localStorage.
     const checkKey = async () => {
-       if (hasAistudio) {
+      // Priority 1: Environment variable (for Vercel, Netlify, etc.)
+      if (process.env.API_KEY) {
+        setIsKeyReady(true);
+        return;
+      }
+      
+      // Priority 2: AI Studio environment
+      // @ts-ignore
+      const hasAistudio = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
+      setIsAistudioEnv(hasAistudio);
+      if (hasAistudio) {
         // @ts-ignore
         const hasKey = await window.aistudio.hasSelectedApiKey();
         setIsKeyReady(hasKey);
       } else {
+        // Priority 3: localStorage for manual key entry
         setIsKeyReady(hasApiKey());
       }
     };
@@ -147,6 +157,8 @@ const App: React.FC = () => {
     };
     reader.readAsDataURL(file);
     setConvertedItems([]);
+    setHeaderText('');
+    setFooterText('');
     setError(null);
   };
 
@@ -159,23 +171,34 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setConvertedItems([]);
+    setHeaderText('');
+    setFooterText('');
 
     try {
       const base64Image = await fileToBase64(imageFile);
       const mimeType = imageFile.type;
-      const result = await extractItemsAndRates(base64Image, mimeType);
-      setConvertedItems(result);
+      const result = await extractContentFromImage(base64Image, mimeType);
+      setConvertedItems(result.items);
+      setHeaderText(result.headerText);
+      setFooterText(result.footerText);
       setApiKeyError(false); // Reset error state on success
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      // Check for specific API key error message
+      
       if (errorMessage.includes('API key not valid')) {
-          if (!isAistudioEnv) {
-            clearApiKey();
+          // If the key is from an env var, it's a configuration issue. Show a persistent error.
+          if (process.env.API_KEY) {
+              setError("The API key provided via the environment variable is invalid.");
+              setApiKeyError(true);
+          } else {
+              // Otherwise, the key is from AI Studio or localStorage. Prompt the user again.
+              if (!isAistudioEnv) {
+                  clearApiKey(); // Clear bad key from localStorage
+              }
+              setIsKeyReady(false);
+              setApiKeyError(true);
+              setError(null); // Clear the generic error to show the key selection screen
           }
-          setIsKeyReady(false);
-          setApiKeyError(true);
-          setError(null); // Clear the generic error to show the key selection screen
       } else {
           setError(errorMessage);
       }
@@ -199,92 +222,132 @@ const App: React.FC = () => {
     else if (isBold) fontStyle = 'bold';
     else if (isItalic) fontStyle = 'italic';
     
-    const hexToRgb = (hex: string): [number, number, number] | null => {
-        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-        if (!result) return null;
-        return [
-            parseInt(result[1], 16),
-            parseInt(result[2], 16),
-            parseInt(result[3], 16)
-        ];
-    };
+    // For PDF readability, always use a high-contrast dark color for the text,
+    // regardless of the UI color selection from the color picker. This fixes
+    // the bug where white text was being rendered on a white background,
+    // making it invisible.
+    const rgbTextColor: [number, number, number] = [40, 40, 40];
     
-    const rgbTextColor = hexToRgb(textColor) || [0, 0, 0]; // Fallback to black for PDF visibility
+    const margins = { left: 15, right: 15, top: 32 };
 
-    autoTable(doc, {
-      head: [['Item Name', 'Rate (₹)']],
-      body: convertedItems.map(i => [i.item, i.rate]),
-      styles: {
-        font: fontMap[fontFamily] || 'helvetica',
-        fontStyle: fontStyle as any,
-        textColor: rgbTextColor,
-        cellPadding: 2.5,
-        fontSize: 10,
-      },
-      headStyles: {
-        fillColor: [30, 41, 59],
-        textColor: [255, 255, 255],
-        fontStyle: 'bold',
-      },
-      columnStyles: {
-        0: { cellWidth: 'auto' }, // Item Name
-        1: { cellWidth: 40, halign: 'right' } // Rate
-      },
-      theme: 'grid',
-      margin: { top: 32 },
-      didDrawPage: (data) => {
-        // Header for every page
+    const didDrawPage = (data: any) => {
+        // Page Header
         const shopName = "KASHI MOBILE SHOP";
         const title = "Ink to Text Converter";
         const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
         
-        // --- Line 1: Shop Name and Date ---
         doc.setFontSize(11);
-        
-        // Shop Name - with attractive, fixed color
         doc.setFont(undefined, 'bold');
         doc.setTextColor(236, 72, 153); // Vibrant Pink
         doc.text(shopName, data.settings.margin.left, 15);
 
-        // Date - with a standard color
         doc.setFont(undefined, 'normal');
         doc.setTextColor(100, 100, 100);
         doc.text(date, doc.internal.pageSize.getWidth() - data.settings.margin.right, 15, { align: 'right' });
 
-        // --- Line 2: Main Title ---
         doc.setFontSize(18);
         doc.setFont(undefined, 'bold');
         doc.setTextColor(40, 40, 40);
         doc.text(title, data.settings.margin.left, 25);
 
-        // --- Footer for every page ---
+        // Page Footer
         doc.setFont(undefined, 'normal');
         doc.setFontSize(9);
         doc.setTextColor(150);
         doc.text(`Page ${data.pageNumber}`, data.settings.margin.left, doc.internal.pageSize.height - 10);
-      }
-    });
-    
+      };
+      
+    let startY = margins.top;
+    let isAutoTableCalled = false;
+
+    const textStyles = {
+        font: fontMap[fontFamily] || 'helvetica',
+        fontStyle: fontStyle as any,
+        textColor: rgbTextColor,
+        fontSize: 10,
+    };
+
+    if (headerText) {
+        autoTable(doc, {
+            body: [[headerText]],
+            startY,
+            theme: 'plain',
+            styles: textStyles,
+            margin: { left: margins.left, right: margins.right },
+            didDrawPage,
+        });
+        startY = (doc as any).lastAutoTable.finalY + 5;
+        isAutoTableCalled = true;
+    }
+
+    if (convertedItems.length > 0) {
+        autoTable(doc, {
+            head: [['Item Name', 'Rate (₹)']],
+            body: convertedItems.map(i => [i.item, i.rate]),
+            startY,
+            styles: {
+                ...textStyles,
+                cellPadding: 2.5,
+            },
+            headStyles: {
+                fillColor: [30, 41, 59],
+                textColor: [255, 255, 255],
+                fontStyle: 'bold',
+            },
+            columnStyles: {
+                0: { cellWidth: 'auto' },
+                1: { cellWidth: 40, halign: 'right' }
+            },
+            theme: 'grid',
+            margin: { left: margins.left, right: margins.right },
+            didDrawPage,
+        });
+        startY = (doc as any).lastAutoTable.finalY + 5;
+        isAutoTableCalled = true;
+    }
+
+    if (footerText) {
+        autoTable(doc, {
+            body: [[footerText]],
+            startY,
+            theme: 'plain',
+            styles: textStyles,
+            margin: { left: margins.left, right: margins.right },
+            didDrawPage,
+        });
+        isAutoTableCalled = true;
+    }
+
+    // If no content was drawn at all, the page chrome (header/footer) would be missing.
+    // This call ensures that the hooks are always run at least once.
+    if (!isAutoTableCalled) {
+         autoTable(doc, {
+            startY,
+            margin: { left: margins.left, right: margins.right },
+            didDrawPage,
+        });
+    }
+
     return doc;
-  }, [convertedItems, textColor, fontFamily, isBold, isItalic]);
+  }, [convertedItems, headerText, footerText, fontFamily, isBold, isItalic]);
 
   const handleDownloadPdf = () => {
-    if (convertedItems.length === 0) return;
+    if (convertedItems.length === 0 && !headerText && !footerText) return;
     const doc = generatePdfDoc();
-    doc.save('business-items.pdf');
+    doc.save('converted-document.pdf');
   };
   
   const handleSharePdf = async () => {
-    if (convertedItems.length === 0 || !isShareApiAvailable) return;
+    if ((convertedItems.length === 0 && !headerText && !footerText) || !isShareApiAvailable) return;
     const doc = generatePdfDoc();
     const pdfBlob = doc.output('blob');
-    const file = new File([pdfBlob], 'business-items.pdf', { type: 'application/pdf' });
+    const file = new File([pdfBlob], 'converted-document.pdf', { type: 'application/pdf' });
 
     try {
         await navigator.share({
             files: [file],
-            title: 'Business Items List',
-            text: 'Here is your converted list of items.'
+            title: 'Converted Document',
+            text: 'Here is your converted document.'
         });
     } catch (error) {
         console.error('Error sharing:', error);
@@ -293,6 +356,8 @@ const App: React.FC = () => {
         }
     }
   };
+
+  const hasContent = convertedItems.length > 0 || !!headerText || !!footerText;
 
   if (!isKeyReady) {
     return <ApiKeySelectionScreen onSelect={handleSelectKey} onSave={handleSaveKey} isManualMode={!isAistudioEnv} hasError={apiKeyError} />;
@@ -320,6 +385,8 @@ const App: React.FC = () => {
           <div className="flex flex-col">
              <OutputBox
               items={convertedItems}
+              headerText={headerText}
+              footerText={footerText}
               isLoading={isLoading}
               error={error}
               textColor={textColor}
@@ -347,7 +414,7 @@ const App: React.FC = () => {
           </button>
            <button
             onClick={handleDownloadPdf}
-            disabled={isLoading || convertedItems.length === 0}
+            disabled={isLoading || !hasContent}
             className="w-full sm:flex-1 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-900/50 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition-all duration-300 text-lg flex items-center justify-center shadow-lg shadow-cyan-600/30"
           >
             Download PDF
@@ -355,7 +422,7 @@ const App: React.FC = () => {
           {isShareApiAvailable && (
             <button
               onClick={handleSharePdf}
-              disabled={isLoading || convertedItems.length === 0}
+              disabled={isLoading || !hasContent}
               className="w-full sm:flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-900/50 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition-all duration-300 text-lg flex items-center justify-center shadow-lg shadow-emerald-600/30"
             >
               Share PDF

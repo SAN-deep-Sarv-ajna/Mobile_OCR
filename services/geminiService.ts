@@ -7,13 +7,14 @@ export interface Item {
   rate: string;
 }
 
-export async function extractItemsAndRates(base64Image: string, mimeType: string): Promise<Item[]> {
-  // @ts-ignore
-  const isAistudioEnv = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
-  const apiKey = isAistudioEnv ? process.env.API_KEY : getApiKey();
+export async function extractContentFromImage(base64Image: string, mimeType: string): Promise<{ items: Item[]; headerText: string; footerText: string; }> {
+  // Unified API key logic.
+  // Priority 1: Environment variable (from AI Studio, Vercel, etc.).
+  // Priority 2: Fallback to user-provided key in localStorage.
+  const apiKey = process.env.API_KEY || getApiKey();
 
   if (!apiKey) {
-    throw new Error("API key is not available. Please select or enter an API key.");
+    throw new Error("API key is not available. Please provide one via environment variables or the manual input screen.");
   }
   const ai = new GoogleGenAI({ apiKey });
 
@@ -25,7 +26,21 @@ export async function extractItemsAndRates(base64Image: string, mimeType: string
       },
     };
 
-    const prompt = `From the image of handwritten text, extract the names of items and their corresponding rates. The context is a mobile phone business, so items could be phones, accessories, or repair services. The rates are in Indian Rupees (₹). Structure the output as a JSON array of objects. Each object must have an 'item' key (a string for the product/service name) and a 'rate' key (a string for the price). Do not include the currency symbol in the 'rate' value. For example: [{"item": "Screen Repair", "rate": "2500"}]. Return only the raw JSON array.`;
+    const prompt = `From the image of handwritten text, extract three distinct types of information based on their position relative to the main list.
+1.  **Header Text**: Any text written *above* the main item-rate list.
+2.  **Item List**: A list of items and their corresponding rates (in Indian Rupees, ₹).
+3.  **Footer Text**: Any text written *below* the main item-rate list.
+
+CRITICAL: For both "headerText" and "footerText", you MUST preserve the original line breaks from the handwriting. Use the newline character '\\n' to separate distinct lines.
+
+Structure the output as a single JSON object with three keys:
+- "headerText": A single string containing all text found above the list. If none, this must be an empty string.
+- "items": An array of objects, where each object has an "item" key (string) and a "rate" key (string, without currency symbols). If no item-rate list is found, this must be an empty array.
+- "footerText": A single string containing all text found below the list. If none, this must be an empty string.
+
+For example, if the note has "Crown Rates" at the top, a list of items, and "Min Qty 10" at the bottom, the output should be:
+{"headerText": "Crown Rates", "items": [{"item": "...", "rate": "..."}], "footerText": "Min Qty 10\\nFolder only Rate"}.
+Return only the raw JSON object.`;
 
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -33,15 +48,30 @@ export async function extractItemsAndRates(base64Image: string, mimeType: string
         config: {
             responseMimeType: "application/json",
             responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        item: { type: Type.STRING, description: "The name of the item or service." },
-                        rate: { type: Type.STRING, description: "The price of the item or service in INR, without symbols." }
+                type: Type.OBJECT,
+                properties: {
+                    headerText: {
+                        type: Type.STRING,
+                        description: "Any text found above the item-rate list. Line breaks must be preserved with '\\n'."
                     },
-                    required: ['item', 'rate']
-                }
+                    items: {
+                        type: Type.ARRAY,
+                        description: "An array of items and their rates.",
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                item: { type: Type.STRING, description: "The name of the item or service." },
+                                rate: { type: Type.STRING, description: "The price of the item or service in INR, without symbols." }
+                            },
+                            required: ['item', 'rate']
+                        }
+                    },
+                    footerText: {
+                        type: Type.STRING,
+                        description: "Any text found below the item-rate list. Line breaks must be preserved with '\\n'."
+                    }
+                },
+                required: ['headerText', 'items', 'footerText']
             }
         }
     });
@@ -54,11 +84,15 @@ export async function extractItemsAndRates(base64Image: string, mimeType: string
     
     const result = JSON.parse(resultText);
 
-    if (!Array.isArray(result)) {
+    if (typeof result !== 'object' || result === null) {
         throw new Error("API returned an unexpected format. Please check the image and try again.");
     }
 
-    return result;
+    return {
+        items: result.items || [],
+        headerText: result.headerText || '',
+        footerText: result.footerText || '',
+    };
 
   } catch (error) {
     console.error("Error during handwriting conversion:", error);
