@@ -68,13 +68,10 @@ const ApiKeySelectionScreen = ({
                         Select API Key
                     </button>
                 )}
-                 <p className="text-xs text-slate-500 mt-6">
-                    For platforms like Vercel, please enter your key manually. It will be stored securely in your browser's local storage for subsequent visits. Browser-based applications cannot directly access backend environment variables.
-                </p>
                 <p className="text-xs text-slate-500 mt-4">
-                    For Gemini API billing information, visit the{' '}
+                    This application uses the Gemini API. For information about pricing, please see the{' '}
                     <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
-                        official documentation
+                        billing documentation
                     </a>.
                 </p>
             </div>
@@ -111,33 +108,30 @@ const App: React.FC = () => {
     setIsAistudioEnv(hasAistudio);
 
     const checkKey = async () => {
-      // Priority 1: Check for an API key from the environment (Vercel, AI Studio, etc.)
-      // Note: For this to work on Vercel, the variable needs to be exposed to the frontend during a build step.
+      // Priority 1: Use a key from local storage if it exists (manual entry)
+      const storedKey = getApiKey();
+      if (storedKey) {
+          setActiveApiKey(storedKey);
+          setIsKeyReady(true);
+          return;
+      }
+
+      // Priority 2: Environment variable (for Vercel, Netlify, etc.)
       if (process.env.API_KEY) {
         setActiveApiKey(process.env.API_KEY);
         setIsKeyReady(true);
         return;
       }
       
-      // AI Studio might not have injected the key into process.env yet,
-      // but can still have a selected key.
+      // Priority 3: AI Studio environment
       if (hasAistudio) {
         // @ts-ignore
         const hasKey = await window.aistudio.hasSelectedApiKey();
         if (hasKey) {
-            // After this, process.env.API_KEY should be populated by AI Studio.
+            // The key is injected into process.env.API_KEY by AI Studio
             setActiveApiKey(process.env.API_KEY);
             setIsKeyReady(true);
-            return;
         }
-      }
-
-      // Priority 2: Fallback to a key stored from a previous manual entry.
-      const storedKey = getApiKey();
-      if (storedKey) {
-          setActiveApiKey(storedKey);
-          setIsKeyReady(true);
-          return;
       }
     };
     checkKey();
