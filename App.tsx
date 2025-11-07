@@ -6,7 +6,7 @@ import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
 import { Controls } from './components/Controls';
 import { OutputBox } from './components/OutputBox';
-import { extractItemsAndRates, Item } from './services/geminiService';
+import { extractContentFromImage, Item } from './services/geminiService';
 import { fileToBase64, hasApiKey, setApiKey, clearApiKey } from './utils/fileUtils';
 
 // A new component for the API Key selection screen
@@ -84,10 +84,12 @@ const App: React.FC = () => {
   const [isAistudioEnv, setIsAistudioEnv] = useState(false);
   const [isKeyReady, setIsKeyReady] = useState(false);
   const [apiKeyError, setApiKeyError] = useState(false);
+  const [isShareApiAvailable, setIsShareApiAvailable] = useState<boolean>(false);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [convertedItems, setConvertedItems] = useState<Item[]>([]);
+  const [otherText, setOtherText] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -112,6 +114,13 @@ const App: React.FC = () => {
       }
     };
     checkKey();
+
+    if (navigator.share && typeof navigator.canShare === 'function') {
+        const dummyFile = new File([""], "test.pdf", { type: "application/pdf" });
+        if (navigator.canShare({ files: [dummyFile] })) {
+            setIsShareApiAvailable(true);
+        }
+    }
   }, []);
 
   const handleSelectKey = async () => {
@@ -139,6 +148,7 @@ const App: React.FC = () => {
     };
     reader.readAsDataURL(file);
     setConvertedItems([]);
+    setOtherText('');
     setError(null);
   };
 
@@ -151,12 +161,14 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setConvertedItems([]);
+    setOtherText('');
 
     try {
       const base64Image = await fileToBase64(imageFile);
       const mimeType = imageFile.type;
-      const result = await extractItemsAndRates(base64Image, mimeType);
-      setConvertedItems(result);
+      const result = await extractContentFromImage(base64Image, mimeType);
+      setConvertedItems(result.items);
+      setOtherText(result.otherText);
       setApiKeyError(false); // Reset error state on success
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -177,9 +189,7 @@ const App: React.FC = () => {
     }
   }, [imageFile, isAistudioEnv]);
 
-  const handleDownloadPdf = () => {
-    if (convertedItems.length === 0) return;
-
+  const generatePdfDoc = useCallback((): jsPDF => {
     const doc = new jsPDF();
 
     const fontMap = {
@@ -193,24 +203,124 @@ const App: React.FC = () => {
     else if (isBold) fontStyle = 'bold';
     else if (isItalic) fontStyle = 'italic';
     
-    autoTable(doc, {
-      head: [['Item Name', 'Rate (₹)']],
-      body: convertedItems.map(i => [i.item, i.rate]),
-      styles: {
-        font: fontMap[fontFamily] || 'helvetica',
-        fontStyle: fontStyle as any,
-        textColor: textColor,
-      },
-      headStyles: {
-        fillColor: [30, 41, 59], // slate-800
-        textColor: [255, 255, 255],
-        fontStyle: 'bold',
-      },
-      theme: 'grid',
-    });
+    const hexToRgb = (hex: string): [number, number, number] | null => {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        if (!result) return null;
+        return [
+            parseInt(result[1], 16),
+            parseInt(result[2], 16),
+            parseInt(result[3], 16)
+        ];
+    };
     
-    doc.save('business-items.pdf');
+    const rgbTextColor = hexToRgb(textColor) || [0, 0, 0]; // Fallback to black for PDF visibility
+    const margins = { left: 15, right: 15, top: 32 };
+    let startY = margins.top;
+
+    // Render "other text" if it exists
+    if (otherText) {
+      doc.setFont(fontMap[fontFamily] || 'helvetica', fontStyle as any);
+      doc.setFontSize(10);
+      doc.setTextColor(rgbTextColor[0], rgbTextColor[1], rgbTextColor[2]);
+      const contentWidth = doc.internal.pageSize.getWidth() - margins.left - margins.right;
+      const textLines = doc.splitTextToSize(otherText, contentWidth);
+      doc.text(textLines, margins.left, startY);
+      const lineHeight = doc.getFontSize() * 1.15;
+      startY += textLines.length * lineHeight;
+    }
+
+    if (convertedItems.length > 0) {
+        // Add padding between paragraph and table
+        if (otherText) {
+            startY += 5;
+        }
+
+        autoTable(doc, {
+          head: [['Item Name', 'Rate (₹)']],
+          body: convertedItems.map(i => [i.item, i.rate]),
+          startY: startY,
+          styles: {
+            font: fontMap[fontFamily] || 'helvetica',
+            fontStyle: fontStyle as any,
+            textColor: rgbTextColor,
+            cellPadding: 2.5,
+            fontSize: 10,
+          },
+          headStyles: {
+            fillColor: [30, 41, 59],
+            textColor: [255, 255, 255],
+            fontStyle: 'bold',
+          },
+          columnStyles: {
+            0: { cellWidth: 'auto' }, // Item Name
+            1: { cellWidth: 40, halign: 'right' } // Rate
+          },
+          theme: 'grid',
+          margin: { top: 32 },
+          didDrawPage: (data) => {
+            // Header for every page
+            const shopName = "KASHI MOBILE SHOP";
+            const title = "Ink to Text Converter";
+            const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+            
+            // --- Line 1: Shop Name and Date ---
+            doc.setFontSize(11);
+            
+            // Shop Name - with attractive, fixed color
+            doc.setFont(undefined, 'bold');
+            doc.setTextColor(236, 72, 153); // Vibrant Pink
+            doc.text(shopName, data.settings.margin.left, 15);
+    
+            // Date - with a standard color
+            doc.setFont(undefined, 'normal');
+            doc.setTextColor(100, 100, 100);
+            doc.text(date, doc.internal.pageSize.getWidth() - data.settings.margin.right, 15, { align: 'right' });
+    
+            // --- Line 2: Main Title ---
+            doc.setFontSize(18);
+            doc.setFont(undefined, 'bold');
+            doc.setTextColor(40, 40, 40);
+            doc.text(title, data.settings.margin.left, 25);
+    
+            // --- Footer for every page ---
+            doc.setFont(undefined, 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(150);
+            doc.text(`Page ${data.pageNumber}`, data.settings.margin.left, doc.internal.pageSize.height - 10);
+          }
+        });
+    }
+    
+    return doc;
+  }, [convertedItems, otherText, textColor, fontFamily, isBold, isItalic]);
+
+  const handleDownloadPdf = () => {
+    if (convertedItems.length === 0 && !otherText) return;
+    const doc = generatePdfDoc();
+    doc.save('converted-document.pdf');
   };
+  
+  const handleSharePdf = async () => {
+    if ((convertedItems.length === 0 && !otherText) || !isShareApiAvailable) return;
+    const doc = generatePdfDoc();
+    const pdfBlob = doc.output('blob');
+    const file = new File([pdfBlob], 'converted-document.pdf', { type: 'application/pdf' });
+
+    try {
+        await navigator.share({
+            files: [file],
+            title: 'Converted Document',
+            text: 'Here is your converted document.'
+        });
+    } catch (error) {
+        console.error('Error sharing:', error);
+        if ((error as Error).name !== 'AbortError') {
+            setError('Could not share the file.');
+        }
+    }
+  };
+
+  const hasContent = convertedItems.length > 0 || !!otherText;
 
   if (!isKeyReady) {
     return <ApiKeySelectionScreen onSelect={handleSelectKey} onSave={handleSaveKey} isManualMode={!isAistudioEnv} hasError={apiKeyError} />;
@@ -238,6 +348,7 @@ const App: React.FC = () => {
           <div className="flex flex-col">
              <OutputBox
               items={convertedItems}
+              otherText={otherText}
               isLoading={isLoading}
               error={error}
               textColor={textColor}
@@ -247,11 +358,11 @@ const App: React.FC = () => {
             />
           </div>
         </main>
-        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="mt-8 flex flex-col sm:flex-row items-center gap-4">
           <button
             onClick={handleConvert}
             disabled={isLoading || !imageFile}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-900/50 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition-all duration-300 text-lg flex items-center justify-center shadow-lg shadow-indigo-600/30"
+            className="w-full sm:flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-900/50 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition-all duration-300 text-lg flex items-center justify-center shadow-lg shadow-indigo-600/30"
           >
             {isLoading ? (
               <>
@@ -265,11 +376,20 @@ const App: React.FC = () => {
           </button>
            <button
             onClick={handleDownloadPdf}
-            disabled={isLoading || convertedItems.length === 0}
-            className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-900/50 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition-all duration-300 text-lg flex items-center justify-center shadow-lg shadow-cyan-600/30"
+            disabled={isLoading || !hasContent}
+            className="w-full sm:flex-1 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-900/50 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition-all duration-300 text-lg flex items-center justify-center shadow-lg shadow-cyan-600/30"
           >
             Download PDF
           </button>
+          {isShareApiAvailable && (
+            <button
+              onClick={handleSharePdf}
+              disabled={isLoading || !hasContent}
+              className="w-full sm:flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-900/50 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition-all duration-300 text-lg flex items-center justify-center shadow-lg shadow-emerald-600/30"
+            >
+              Share PDF
+            </button>
+          )}
         </div>
       </div>
     </div>

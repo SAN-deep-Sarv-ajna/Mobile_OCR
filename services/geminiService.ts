@@ -7,7 +7,7 @@ export interface Item {
   rate: string;
 }
 
-export async function extractItemsAndRates(base64Image: string, mimeType: string): Promise<Item[]> {
+export async function extractContentFromImage(base64Image: string, mimeType: string): Promise<{ items: Item[]; otherText: string; }> {
   // @ts-ignore
   const isAistudioEnv = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
   const apiKey = isAistudioEnv ? process.env.API_KEY : getApiKey();
@@ -25,7 +25,16 @@ export async function extractItemsAndRates(base64Image: string, mimeType: string
       },
     };
 
-    const prompt = `From the image of handwritten text, extract the names of items and their corresponding rates. The context is a mobile phone business, so items could be phones, accessories, or repair services. The rates are in Indian Rupees (₹). Structure the output as a JSON array of objects. Each object must have an 'item' key (a string for the product/service name) and a 'rate' key (a string for the price). Do not include the currency symbol in the 'rate' value. For example: [{"item": "Screen Repair", "rate": "2500"}]. Return only the raw JSON array.`;
+    const prompt = `From the image of handwritten text, extract two types of information. 
+    1. A list of items and their corresponding rates (in Indian Rupees, ₹). 
+    2. Any other text on the page that is not part of the item-rate list.
+    
+    Structure the output as a single JSON object with two keys:
+    - "items": An array of objects, where each object has an "item" key (string) and a "rate" key (string, without currency symbols). If no item-rate list is found, this should be an empty array.
+    - "otherText": A single string containing all other text. If no other text is found, this should be an empty string.
+    
+    For example: {"items": [{"item": "Screen Repair", "rate": "2500"}], "otherText": "Notes for today's tasks."}.
+    Return only the raw JSON object.`;
 
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -33,15 +42,26 @@ export async function extractItemsAndRates(base64Image: string, mimeType: string
         config: {
             responseMimeType: "application/json",
             responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        item: { type: Type.STRING, description: "The name of the item or service." },
-                        rate: { type: Type.STRING, description: "The price of the item or service in INR, without symbols." }
+                type: Type.OBJECT,
+                properties: {
+                    items: {
+                        type: Type.ARRAY,
+                        description: "An array of items and their rates.",
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                item: { type: Type.STRING, description: "The name of the item or service." },
+                                rate: { type: Type.STRING, description: "The price of the item or service in INR, without symbols." }
+                            },
+                            required: ['item', 'rate']
+                        }
                     },
-                    required: ['item', 'rate']
-                }
+                    otherText: {
+                        type: Type.STRING,
+                        description: "Any other text found in the image that is not part of the item-rate list."
+                    }
+                },
+                required: ['items', 'otherText']
             }
         }
     });
@@ -54,11 +74,14 @@ export async function extractItemsAndRates(base64Image: string, mimeType: string
     
     const result = JSON.parse(resultText);
 
-    if (!Array.isArray(result)) {
+    if (typeof result !== 'object' || result === null) {
         throw new Error("API returned an unexpected format. Please check the image and try again.");
     }
 
-    return result;
+    return {
+        items: result.items || [],
+        otherText: result.otherText || ''
+    };
 
   } catch (error) {
     console.error("Error during handwriting conversion:", error);
