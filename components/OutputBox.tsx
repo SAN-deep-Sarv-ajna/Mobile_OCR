@@ -1,10 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import { Item } from '../services/geminiService';
 
 interface OutputBoxProps {
   items: Item[];
-  otherText: string;
   isLoading: boolean;
   error: string | null;
   textColor: string;
@@ -27,7 +25,6 @@ const CheckIcon = () => (
 
 export const OutputBox: React.FC<OutputBoxProps> = ({
   items,
-  otherText,
   isLoading,
   error,
   textColor,
@@ -45,16 +42,9 @@ export const OutputBox: React.FC<OutputBoxProps> = ({
   }, [isCopied]);
 
   const handleCopy = () => {
-    let textToCopy = '';
-    if (otherText) {
-      textToCopy += otherText + '\n\n';
-    }
     if (items && items.length > 0) {
-      textToCopy += items.map(i => `${i.item}\t₹${i.rate}`).join('\n');
-    }
-    
-    if(textToCopy.trim()){
-      navigator.clipboard.writeText(textToCopy.trim());
+      const textToCopy = items.map(i => `${i.item}\t₹${i.rate}`).join('\n');
+      navigator.clipboard.writeText(textToCopy);
       setIsCopied(true);
     }
   };
@@ -70,8 +60,6 @@ export const OutputBox: React.FC<OutputBoxProps> = ({
     isBold ? 'font-bold' : 'font-normal',
     isItalic ? 'italic' : 'not-italic',
   ].join(' ');
-
-  const hasContent = items.length > 0 || !!otherText;
 
   const renderContent = () => {
     if (isLoading) {
@@ -94,38 +82,31 @@ export const OutputBox: React.FC<OutputBoxProps> = ({
       );
     }
     
-    if (!hasContent) {
+    if (!items || items.length === 0) {
       return (
         <div className="flex items-center justify-center h-full text-slate-500">
-          <p>Your converted content will appear here.</p>
+          <p>Your converted items will appear here.</p>
         </div>
       );
     }
     
     return (
-      <div className={styleClasses} style={{ color: textColor }}>
-        {otherText && (
-            <p className="whitespace-pre-wrap mb-4">{otherText}</p>
-        )}
-        {items && items.length > 0 && (
-            <table className="w-full text-left">
-                <thead>
-                <tr className="border-b border-slate-600">
-                    <th className="p-2">Item Name</th>
-                    <th className="p-2 text-right">Rate (₹)</th>
-                </tr>
-                </thead>
-                <tbody>
-                {items.map((item, index) => (
-                    <tr key={index} className="border-b border-slate-700 last:border-b-0">
-                    <td className="p-2">{item.item}</td>
-                    <td className="p-2 text-right">{item.rate}</td>
-                    </tr>
-                ))}
-                </tbody>
-            </table>
-        )}
-      </div>
+      <table className={`w-full text-left ${styleClasses}`} style={{ color: textColor }}>
+        <thead>
+          <tr className="border-b border-slate-600">
+            <th className="p-2">Item Name</th>
+            <th className="p-2 text-right">Rate (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, index) => (
+            <tr key={index} className="border-b border-slate-700 last:border-b-0">
+              <td className="p-2">{item.item}</td>
+              <td className="p-2 text-right">{item.rate}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     );
   };
   
@@ -134,7 +115,7 @@ export const OutputBox: React.FC<OutputBoxProps> = ({
       <div className="flex-grow p-4 overflow-auto">
         {renderContent()}
       </div>
-       {hasContent && !isLoading && !error && (
+       {items && items.length > 0 && !isLoading && !error && (
         <button
           onClick={handleCopy}
           className="absolute top-2 right-2 p-2 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
