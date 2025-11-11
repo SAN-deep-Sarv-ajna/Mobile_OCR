@@ -10,10 +10,6 @@ import { extractContentFromImage, Item } from './services/geminiService';
 import { fileToBase64 } from './utils/fileUtils';
 
 const App: React.FC = () => {
-  // State for AI Studio environment
-  const [isAistudioEnv, setIsAistudioEnv] = useState(false);
-  const [needsKeySelection, setNeedsKeySelection] = useState(false);
-
   // App State
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -32,20 +28,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      // @ts-ignore
-      if (window.aistudio) {
-        setIsAistudioEnv(true);
-        try {
-            // @ts-ignore
-            const hasKey = await window.aistudio.hasSelectedApiKey();
-            if (!hasKey) {
-                setNeedsKeySelection(true);
-            }
-        } catch (e) {
-            console.warn("AI Studio check failed", e);
-        }
-      }
-      
       // Check for Share API availability
       try {
         if (navigator.share && typeof navigator.canShare === 'function') {
@@ -61,21 +43,6 @@ const App: React.FC = () => {
     };
     init();
   }, []);
-
-  const handleConnectKey = async () => {
-    try {
-        // @ts-ignore
-        if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-            // @ts-ignore
-            await window.aistudio.openSelectKey();
-            setNeedsKeySelection(false);
-            setError(null);
-        }
-    } catch (e) {
-        console.error(e);
-        setError("Failed to select API key.");
-    }
-  };
 
   const handleImageSelect = (file: File) => {
     setImageFile(file);
@@ -112,19 +79,12 @@ const App: React.FC = () => {
       setFooterText(result.footerText);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      
-      // Handle specific AI Studio error where key might be lost or invalid
-      if (errorMessage.includes("Requested entity was not found") && isAistudioEnv) {
-          setNeedsKeySelection(true);
-          setError("Session expired or invalid key. Please select your API key again.");
-      } else {
-          setError(errorMessage);
-      }
+      setError(errorMessage);
       console.error(err);
     } finally {
       setIsLoading(false);
     }
-  }, [imageFile, isAistudioEnv]);
+  }, [imageFile]);
 
   const generatePdfDoc = useCallback((): jsPDF => {
     const doc = new jsPDF();
@@ -270,26 +230,6 @@ const App: React.FC = () => {
   };
 
   const hasContent = convertedItems.length > 0 || !!headerText || !!footerText;
-
-  // If in AI Studio and no key selected, show selection screen
-  if (needsKeySelection) {
-      return (
-        <div className="min-h-screen bg-slate-900 font-sans flex flex-col items-center justify-center p-4 text-center">
-            <div className="max-w-md w-full bg-slate-800 p-8 rounded-lg shadow-2xl border border-slate-700">
-                <Header />
-                <p className="text-slate-400 my-6">
-                    Please select a Google Cloud Project or API Key to start converting your handwritten notes.
-                </p>
-                <button
-                    onClick={handleConnectKey}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 text-lg shadow-lg shadow-indigo-600/30"
-                >
-                    Get Started
-                </button>
-            </div>
-        </div>
-      );
-  }
 
   return (
     <div className="min-h-screen bg-slate-900 font-sans flex flex-col items-center p-4 sm:p-6 lg:p-8 relative">
