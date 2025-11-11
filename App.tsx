@@ -7,19 +7,23 @@ import { ImageUploader } from './components/ImageUploader';
 import { Controls } from './components/Controls';
 import { OutputBox } from './components/OutputBox';
 import { extractContentFromImage, Item } from './services/geminiService';
-import { fileToBase64, hasApiKey, setApiKey, clearApiKey, getApiKey } from './utils/fileUtils';
+import { fileToBase64, setApiKey, clearApiKey, getApiKey } from './utils/fileUtils';
 
 // A new component for the API Key selection screen
 const ApiKeySelectionScreen = ({ 
   onSelect, 
   onSave,
   isManualMode,
-  errorMessage 
+  errorMessage,
+  hasExistingKey,
+  onCancel
 }: { 
   onSelect: () => void, 
   onSave: (key: string) => void,
   isManualMode: boolean,
-  errorMessage: string | null 
+  errorMessage: string | null,
+  hasExistingKey: boolean,
+  onCancel: () => void
 }) => {
     const [manualKey, setManualKey] = useState('');
     
@@ -52,13 +56,24 @@ const ApiKeySelectionScreen = ({
                             className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                             aria-label="API Key Input"
                         />
-                        <button
-                            type="submit"
-                            disabled={!manualKey.trim()}
-                            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-900/50 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 text-lg shadow-lg shadow-indigo-600/30"
-                        >
-                            Save & Continue
-                        </button>
+                        <div className="flex gap-3">
+                            {hasExistingKey && (
+                                <button
+                                    type="button"
+                                    onClick={onCancel}
+                                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold py-3 px-4 rounded-lg transition-all duration-300 text-lg"
+                                >
+                                    Cancel
+                                </button>
+                            )}
+                            <button
+                                type="submit"
+                                disabled={!manualKey.trim()}
+                                className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-900/50 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 text-lg shadow-lg shadow-indigo-600/30"
+                            >
+                                Save
+                            </button>
+                        </div>
                     </form>
                 ) : (
                     <button
@@ -69,7 +84,7 @@ const ApiKeySelectionScreen = ({
                     </button>
                 )}
                  <p className="text-xs text-slate-500 mt-6">
-                    For platforms like Vercel, please enter your key manually. It will be stored securely in your browser's local storage for subsequent visits. Browser-based applications cannot directly access backend environment variables.
+                    Your key is stored locally in your browser.
                 </p>
                 <p className="text-xs text-slate-500 mt-4">
                     For Gemini API billing information, visit the{' '}
@@ -81,7 +96,6 @@ const ApiKeySelectionScreen = ({
         </div>
     );
 };
-
 
 const App: React.FC = () => {
   const [isAistudioEnv, setIsAistudioEnv] = useState(false);
@@ -111,42 +125,46 @@ const App: React.FC = () => {
     setIsAistudioEnv(hasAistudio);
 
     const checkKey = async () => {
-      // Priority 1: Check for an API key from the environment (Vercel, AI Studio, etc.)
-      // Note: For this to work on Vercel, the variable needs to be exposed to the frontend during a build step.
-      if (process.env.API_KEY) {
-        setActiveApiKey(process.env.API_KEY);
-        setIsKeyReady(true);
-        return;
-      }
-      
-      // AI Studio might not have injected the key into process.env yet,
-      // but can still have a selected key.
-      if (hasAistudio) {
-        // @ts-ignore
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        if (hasKey) {
-            // After this, process.env.API_KEY should be populated by AI Studio.
+      try {
+          // Priority 1: Check for an API key from the environment (Vercel, AI Studio, etc.)
+          if (process.env.API_KEY) {
             setActiveApiKey(process.env.API_KEY);
             setIsKeyReady(true);
             return;
-        }
-      }
+          }
+          
+          // AI Studio check
+          if (hasAistudio) {
+            try {
+                // @ts-ignore
+                const hasKey = await window.aistudio.hasSelectedApiKey();
+                if (hasKey) {
+                    setActiveApiKey(process.env.API_KEY);
+                    setIsKeyReady(true);
+                    return;
+                }
+            } catch (err) {
+                console.warn("AI Studio key check failed:", err);
+            }
+          }
 
-      // Priority 2: Fallback to a key stored from a previous manual entry.
-      const storedKey = getApiKey();
-      if (storedKey) {
-          setActiveApiKey(storedKey);
-          setIsKeyReady(true);
-          return;
+          // Priority 2: Fallback to a key stored from a previous manual entry.
+          const storedKey = getApiKey();
+          if (storedKey) {
+              setActiveApiKey(storedKey);
+              setIsKeyReady(true);
+              return;
+          }
+      } catch (err) {
+          console.error("Error initializing API key:", err);
       }
     };
     checkKey();
 
-    // Check for Share API availability robustly.
+    // Check for Share API availability
     try {
       if (navigator.share && typeof navigator.canShare === 'function') {
         const dummyFile = new File([''], 'test.pdf', { type: 'application/pdf' });
-        // We must specifically check if 'files' can be shared, as this is not supported everywhere.
         if (navigator.canShare({ files: [dummyFile] })) {
           setIsShareApiAvailable(true);
         }
@@ -162,7 +180,6 @@ const App: React.FC = () => {
     if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
         // @ts-ignore
         await window.aistudio.openSelectKey();
-        // After selection, AI Studio injects the key into the environment.
         setActiveApiKey(process.env.API_KEY || null);
         setIsKeyReady(true);
         setApiKeyError(null);
@@ -174,6 +191,18 @@ const App: React.FC = () => {
     setActiveApiKey(key); // to state
     setIsKeyReady(true);
     setApiKeyError(null);
+  };
+  
+  const handleCancelKeyUpdate = () => {
+    if (activeApiKey) {
+        setIsKeyReady(true);
+        setApiKeyError(null);
+    }
+  };
+  
+  const handleRequestKeyChange = () => {
+      setIsKeyReady(false);
+      setApiKeyError(null);
   };
 
   const handleImageSelect = (file: File) => {
@@ -195,7 +224,7 @@ const App: React.FC = () => {
       return;
     }
     if (!activeApiKey) {
-      setError('API Key is missing. Please refresh and provide a key.');
+      setError('API Key is missing. Please add a key.');
       setIsKeyReady(false);
       return;
     }
@@ -223,11 +252,10 @@ const App: React.FC = () => {
                             errorMessage.includes('provide one');
 
       if (isApiKeyError) {
-          setIsKeyReady(false);
-          setActiveApiKey(null);
-          clearApiKey(); // Always clear a potentially bad manual key.
+          // Do not automatically clear the key from storage, just prompt the user.
           setError(null);
-          setApiKeyError("Your API key is invalid or missing. Please select or enter a valid key to continue.");
+          setApiKeyError("Authentication failed. The API key provided is invalid or expired.");
+          setIsKeyReady(false);
       } else {
           setError(errorMessage);
       }
@@ -383,12 +411,36 @@ const App: React.FC = () => {
   const hasContent = convertedItems.length > 0 || !!headerText || !!footerText;
 
   if (!isKeyReady) {
-    return <ApiKeySelectionScreen onSelect={handleSelectKey} onSave={handleSaveKey} isManualMode={!isAistudioEnv} errorMessage={apiKeyError} />;
+    return (
+        <ApiKeySelectionScreen 
+            onSelect={handleSelectKey} 
+            onSave={handleSaveKey} 
+            isManualMode={!isAistudioEnv} 
+            errorMessage={apiKeyError} 
+            hasExistingKey={!!activeApiKey}
+            onCancel={handleCancelKeyUpdate}
+        />
+    );
   }
 
 
   return (
-    <div className="min-h-screen bg-slate-900 font-sans flex flex-col items-center p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen bg-slate-900 font-sans flex flex-col items-center p-4 sm:p-6 lg:p-8 relative">
+        {/* API Key Change Button */}
+        {!isAistudioEnv && (
+            <div className="absolute top-4 right-4 z-10">
+                <button 
+                    onClick={handleRequestKeyChange}
+                    className="text-xs sm:text-sm text-slate-400 hover:text-white bg-slate-800/50 hover:bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-full transition-colors flex items-center gap-2"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11.536 9.636 11.536 9.636 10.586 8.686a2 2 0 00-2.828 0L6 10.414V13h2.828l8.757-8.757z" />
+                    </svg>
+                    API Key
+                </button>
+            </div>
+        )}
+
       <div className="w-full max-w-4xl mx-auto">
         <Header />
         <main className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8">
