@@ -1,13 +1,18 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
 import { Controls } from './components/Controls';
 import { OutputBox } from './components/OutputBox';
 import { extractContentFromImage, Item } from './services/geminiService';
 import { fileToBase64 } from './utils/fileUtils';
+
+const SettingsIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+  </svg>
+);
 
 const App: React.FC = () => {
   // App State
@@ -20,6 +25,10 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isShareApiAvailable, setIsShareApiAvailable] = useState<boolean>(false);
 
+  // API Key State
+  const [apiKey, setApiKey] = useState<string>('');
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+
   // Formatting options state
   const [textColor, setTextColor] = useState<string>('#FFFFFF');
   const [fontFamily, setFontFamily] = useState<string>('sans');
@@ -28,6 +37,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
+      // Load API Key from storage
+      const storedKey = localStorage.getItem('gemini_api_key');
+      if (storedKey) {
+          setApiKey(storedKey);
+      }
+
       // Check for Share API availability
       try {
         if (navigator.share && typeof navigator.canShare === 'function') {
@@ -43,6 +58,11 @@ const App: React.FC = () => {
     };
     init();
   }, []);
+
+  const handleSaveApiKey = (key: string) => {
+      setApiKey(key);
+      localStorage.setItem('gemini_api_key', key);
+  };
 
   const handleImageSelect = (file: File) => {
     setImageFile(file);
@@ -72,8 +92,8 @@ const App: React.FC = () => {
     try {
       const base64Image = await fileToBase64(imageFile);
       const mimeType = imageFile.type;
-      // The service now uses process.env.API_KEY directly
-      const result = await extractContentFromImage(base64Image, mimeType);
+      // Pass the local apiKey to the service
+      const result = await extractContentFromImage(base64Image, mimeType, apiKey);
       setConvertedItems(result.items);
       setHeaderText(result.headerText);
       setFooterText(result.footerText);
@@ -84,9 +104,15 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [imageFile]);
+  }, [imageFile, apiKey]);
 
-  const generatePdfDoc = useCallback((): jsPDF => {
+  const generatePdfDoc = useCallback(async () => {
+    // Dynamically import libraries to reduce initial bundle size
+    const jsPDFModule = await import('jspdf');
+    const jsPDF = jsPDFModule.default;
+    const autoTableModule = await import('jspdf-autotable');
+    const autoTable = autoTableModule.default;
+
     const doc = new jsPDF();
 
     const fontMap: Record<string, string> = {
@@ -203,19 +229,28 @@ const App: React.FC = () => {
     return doc;
   }, [convertedItems, headerText, footerText, fontFamily, isBold, isItalic]);
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
     if (convertedItems.length === 0 && !headerText && !footerText) return;
-    const doc = generatePdfDoc();
-    doc.save('converted-document.pdf');
+    setIsLoading(true);
+    try {
+      const doc = await generatePdfDoc();
+      doc.save('converted-document.pdf');
+    } catch (e) {
+      console.error('Error generating PDF:', e);
+      setError('Failed to generate PDF. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   const handleSharePdf = async () => {
     if ((convertedItems.length === 0 && !headerText && !footerText) || !isShareApiAvailable) return;
-    const doc = generatePdfDoc();
-    const pdfBlob = doc.output('blob');
-    const file = new File([pdfBlob], 'converted-document.pdf', { type: 'application/pdf' });
-
+    setIsLoading(true);
     try {
+        const doc = await generatePdfDoc();
+        const pdfBlob = doc.output('blob');
+        const file = new File([pdfBlob], 'converted-document.pdf', { type: 'application/pdf' });
+
         await navigator.share({
             files: [file],
             title: 'Converted Document',
@@ -226,6 +261,8 @@ const App: React.FC = () => {
         if ((error as Error).name !== 'AbortError') {
             setError('Could not share the file.');
         }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -233,8 +270,40 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-900 font-sans flex flex-col items-center p-4 sm:p-6 lg:p-8 relative">
-      <div className="w-full max-w-4xl mx-auto">
+      <div className="w-full max-w-4xl mx-auto relative">
+        
+        <div className="absolute top-0 right-0 z-10">
+            <button 
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-2 text-slate-400 hover:text-indigo-400 transition-colors"
+                title="Settings"
+            >
+                <SettingsIcon />
+            </button>
+        </div>
+
         <Header />
+
+        {showSettings && (
+             <div className="mb-6 p-4 bg-slate-800/80 backdrop-blur-sm rounded-lg border border-slate-700 animate-fade-in-down">
+                <h3 className="text-slate-200 font-semibold mb-2 text-sm">Settings</h3>
+                <label className="block text-slate-400 mb-1 text-xs">Gemini API Key (Saved locally)</label>
+                <input 
+                    type="password" 
+                    value={apiKey}
+                    onChange={(e) => {
+                        setApiKey(e.target.value);
+                        handleSaveApiKey(e.target.value);
+                    }}
+                    placeholder="Enter your API Key here..."
+                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition-all"
+                />
+                 <p className="text-xs text-slate-500 mt-2">
+                    Your API key is stored securely in your browser's local storage and is only used to communicate with Google's Gemini API.
+                </p>
+             </div>
+         )}
+
         <main className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8">
           <div className="flex flex-col space-y-6">
             <ImageUploader onImageSelect={handleImageSelect} imageUrl={imageUrl} />
@@ -275,7 +344,7 @@ const App: React.FC = () => {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Converting...
+                Processing...
               </>
             ) : 'Convert Image'}
           </button>

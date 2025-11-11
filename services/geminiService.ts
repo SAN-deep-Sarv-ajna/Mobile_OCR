@@ -8,10 +8,17 @@ export interface Item {
 
 export async function extractContentFromImage(
   base64Image: string, 
-  mimeType: string
+  mimeType: string,
+  apiKey?: string
 ): Promise<{ items: Item[]; headerText: string; footerText: string; }> {
   
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const key = apiKey || process.env.API_KEY;
+  
+  if (!key) {
+    throw new Error("API Key is missing. Please set it in the settings.");
+  }
+
+  const ai = new GoogleGenAI({ apiKey: key });
 
   try {
     const imagePart = {

@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+
+import React, { useState, useRef, useEffect } from 'react';
 
 interface CameraCaptureProps {
   onCapture: (file: File) => void;
@@ -8,33 +9,54 @@ interface CameraCaptureProps {
 const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const startCamera = useCallback(async () => {
-    try {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      setCapturedImage(null);
-      const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      setStream(newStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = newStream;
-      }
-    } catch (err) {
-      console.error("Error accessing camera:", err);
-      setError("Could not access camera. Please ensure permissions are granted and you have a camera available.");
-    }
-  }, [stream]);
-
+  // Initialize camera
   useEffect(() => {
-    startCamera();
-    return () => {
-      stream?.getTracks().forEach(track => track.stop());
+    let isMounted = true;
+
+    const startCamera = async () => {
+      try {
+        // Clean up any existing stream first
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: 'environment' } 
+        });
+
+        // If component unmounted during the async call, stop the stream immediately
+        if (!isMounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        setError(null);
+      } catch (err) {
+        if (isMounted) {
+          console.error("Error accessing camera:", err);
+          setError("Could not access camera. Please ensure permissions are granted and you have a camera available.");
+        }
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    startCamera();
+
+    // Cleanup function
+    return () => {
+      isMounted = false;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+    };
   }, []);
 
   const handleCapture = () => {
@@ -48,14 +70,19 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
         setCapturedImage(dataUrl);
-        stream?.getTracks().forEach(track => track.stop());
-        setStream(null);
+        // Pause stream visualization but keep stream open in case user retakes
+        if (videoRef.current) {
+            videoRef.current.pause();
+        }
       }
     }
   };
 
   const handleRetake = () => {
-    startCamera();
+    setCapturedImage(null);
+    if (videoRef.current && streamRef.current) {
+        videoRef.current.play();
+    }
   };
   
   const handleUsePhoto = () => {
