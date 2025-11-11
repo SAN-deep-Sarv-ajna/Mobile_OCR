@@ -8,13 +8,10 @@ export interface Item {
 
 export async function extractContentFromImage(
   base64Image: string, 
-  mimeType: string, 
-  apiKey: string
+  mimeType: string
 ): Promise<{ items: Item[]; headerText: string; footerText: string; }> {
-  if (!apiKey) {
-    throw new Error("API key was not provided for the conversion.");
-  }
-  const ai = new GoogleGenAI({ apiKey });
+  
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   try {
     const imagePart = {
@@ -97,7 +94,7 @@ Return only the raw JSON object.`;
     if (error instanceof SyntaxError) {
         throw new Error("Failed to process the AI's response. The handwriting might be illegible or in an unexpected format.");
     }
-    // Re-throw other errors so the UI can handle them, especially API key errors.
+    // Re-throw other errors so the UI can handle them
     throw error;
   }
 }

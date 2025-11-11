@@ -16,23 +16,3 @@ export const fileToBase64 = (file: File): Promise<string> => {
     reader.onerror = (error) => reject(error);
   });
 };
-
-// --- API Key Management for non-AI Studio environments ---
-
-const API_KEY_LOCAL_STORAGE_KEY = 'gemini-api-key';
-
-export const setApiKey = (apiKey: string): void => {
-  localStorage.setItem(API_KEY_LOCAL_STORAGE_KEY, apiKey);
-};
-
-export const getApiKey = (): string | null => {
-  return localStorage.getItem(API_KEY_LOCAL_STORAGE_KEY);
-};
-
-export const clearApiKey = (): void => {
-  localStorage.removeItem(API_KEY_LOCAL_STORAGE_KEY);
-};
-
-export const hasApiKey = (): boolean => {
-  return getApiKey() !== null;
-};

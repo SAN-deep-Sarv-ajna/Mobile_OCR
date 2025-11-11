@@ -7,103 +7,14 @@ import { ImageUploader } from './components/ImageUploader';
 import { Controls } from './components/Controls';
 import { OutputBox } from './components/OutputBox';
 import { extractContentFromImage, Item } from './services/geminiService';
-import { fileToBase64, setApiKey, clearApiKey, getApiKey } from './utils/fileUtils';
-
-// A new component for the API Key selection screen
-const ApiKeySelectionScreen = ({ 
-  onSelect, 
-  onSave,
-  isManualMode,
-  errorMessage,
-  hasExistingKey,
-  onCancel
-}: { 
-  onSelect: () => void, 
-  onSave: (key: string) => void,
-  isManualMode: boolean,
-  errorMessage: string | null,
-  hasExistingKey: boolean,
-  onCancel: () => void
-}) => {
-    const [manualKey, setManualKey] = useState('');
-    
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (manualKey.trim()) {
-            onSave(manualKey.trim());
-        }
-    };
-    
-    return (
-        <div className="min-h-screen bg-slate-900 font-sans flex flex-col items-center justify-center p-4 text-center">
-            <div className="max-w-md w-full bg-slate-800 p-8 rounded-lg shadow-2xl border border-slate-700">
-                <h1 className="text-3xl font-bold text-white mb-4">API Key Required</h1>
-                <p className="text-slate-400 mb-6">
-                    To use the Ink to Text Converter, you need a Google AI API key.
-                </p>
-                {errorMessage && (
-                    <p className="text-red-400 bg-red-900/30 p-3 rounded-md mb-6 text-sm">
-                        {errorMessage}
-                    </p>
-                )}
-                {isManualMode ? (
-                     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-                        <input
-                            type="password"
-                            value={manualKey}
-                            onChange={(e) => setManualKey(e.target.value)}
-                            placeholder="Enter your API key here"
-                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                            aria-label="API Key Input"
-                        />
-                        <div className="flex gap-3">
-                            {hasExistingKey && (
-                                <button
-                                    type="button"
-                                    onClick={onCancel}
-                                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold py-3 px-4 rounded-lg transition-all duration-300 text-lg"
-                                >
-                                    Cancel
-                                </button>
-                            )}
-                            <button
-                                type="submit"
-                                disabled={!manualKey.trim()}
-                                className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-900/50 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 text-lg shadow-lg shadow-indigo-600/30"
-                            >
-                                Save
-                            </button>
-                        </div>
-                    </form>
-                ) : (
-                    <button
-                        onClick={onSelect}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 text-lg shadow-lg shadow-indigo-600/30"
-                    >
-                        Select API Key
-                    </button>
-                )}
-                 <p className="text-xs text-slate-500 mt-6">
-                    Your key is stored locally in your browser.
-                </p>
-                <p className="text-xs text-slate-500 mt-4">
-                    For Gemini API billing information, visit the{' '}
-                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
-                        official documentation
-                    </a>.
-                </p>
-            </div>
-        </div>
-    );
-};
+import { fileToBase64 } from './utils/fileUtils';
 
 const App: React.FC = () => {
+  // State for AI Studio environment
   const [isAistudioEnv, setIsAistudioEnv] = useState(false);
-  const [isKeyReady, setIsKeyReady] = useState(false);
-  const [activeApiKey, setActiveApiKey] = useState<string | null>(null);
-  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
-  const [isShareApiAvailable, setIsShareApiAvailable] = useState<boolean>(false);
+  const [needsKeySelection, setNeedsKeySelection] = useState(false);
 
+  // App State
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [convertedItems, setConvertedItems] = useState<Item[]>([]);
@@ -111,6 +22,7 @@ const App: React.FC = () => {
   const [footerText, setFooterText] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isShareApiAvailable, setIsShareApiAvailable] = useState<boolean>(false);
 
   // Formatting options state
   const [textColor, setTextColor] = useState<string>('#FFFFFF');
@@ -119,90 +31,50 @@ const App: React.FC = () => {
   const [isItalic, setIsItalic] = useState<boolean>(false);
 
   useEffect(() => {
-    // Determine which environment we are in first.
-    // @ts-ignore
-    const hasAistudio = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
-    setIsAistudioEnv(hasAistudio);
-
-    const checkKey = async () => {
-      try {
-          // Priority 1: Check for an API key from the environment (Vercel, AI Studio, etc.)
-          if (process.env.API_KEY) {
-            setActiveApiKey(process.env.API_KEY);
-            setIsKeyReady(true);
-            return;
-          }
-          
-          // AI Studio check
-          if (hasAistudio) {
-            try {
-                // @ts-ignore
-                const hasKey = await window.aistudio.hasSelectedApiKey();
-                if (hasKey) {
-                    setActiveApiKey(process.env.API_KEY);
-                    setIsKeyReady(true);
-                    return;
-                }
-            } catch (err) {
-                console.warn("AI Studio key check failed:", err);
+    const init = async () => {
+      // @ts-ignore
+      if (window.aistudio) {
+        setIsAistudioEnv(true);
+        try {
+            // @ts-ignore
+            const hasKey = await window.aistudio.hasSelectedApiKey();
+            if (!hasKey) {
+                setNeedsKeySelection(true);
             }
-          }
-
-          // Priority 2: Fallback to a key stored from a previous manual entry.
-          const storedKey = getApiKey();
-          if (storedKey) {
-              setActiveApiKey(storedKey);
-              setIsKeyReady(true);
-              return;
-          }
-      } catch (err) {
-          console.error("Error initializing API key:", err);
-      }
-    };
-    checkKey();
-
-    // Check for Share API availability
-    try {
-      if (navigator.share && typeof navigator.canShare === 'function') {
-        const dummyFile = new File([''], 'test.pdf', { type: 'application/pdf' });
-        if (navigator.canShare({ files: [dummyFile] })) {
-          setIsShareApiAvailable(true);
+        } catch (e) {
+            console.warn("AI Studio check failed", e);
         }
       }
-    } catch (error) {
-      console.warn('Web Share API for files not supported or check failed:', error);
-      setIsShareApiAvailable(false);
-    }
+      
+      // Check for Share API availability
+      try {
+        if (navigator.share && typeof navigator.canShare === 'function') {
+            const dummyFile = new File([''], 'test.pdf', { type: 'application/pdf' });
+            if (navigator.canShare({ files: [dummyFile] })) {
+            setIsShareApiAvailable(true);
+            }
+        }
+      } catch (error) {
+        console.warn('Web Share API not supported:', error);
+        setIsShareApiAvailable(false);
+      }
+    };
+    init();
   }, []);
 
-  const handleSelectKey = async () => {
-    // @ts-ignore
-    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+  const handleConnectKey = async () => {
+    try {
         // @ts-ignore
-        await window.aistudio.openSelectKey();
-        setActiveApiKey(process.env.API_KEY || null);
-        setIsKeyReady(true);
-        setApiKeyError(null);
+        if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+            // @ts-ignore
+            await window.aistudio.openSelectKey();
+            setNeedsKeySelection(false);
+            setError(null);
+        }
+    } catch (e) {
+        console.error(e);
+        setError("Failed to select API key.");
     }
-  };
-  
-  const handleSaveKey = (key: string) => {
-    setApiKey(key); // to localStorage
-    setActiveApiKey(key); // to state
-    setIsKeyReady(true);
-    setApiKeyError(null);
-  };
-  
-  const handleCancelKeyUpdate = () => {
-    if (activeApiKey) {
-        setIsKeyReady(true);
-        setApiKeyError(null);
-    }
-  };
-  
-  const handleRequestKeyChange = () => {
-      setIsKeyReady(false);
-      setApiKeyError(null);
   };
 
   const handleImageSelect = (file: File) => {
@@ -223,11 +95,6 @@ const App: React.FC = () => {
       setError('Please upload an image first.');
       return;
     }
-    if (!activeApiKey) {
-      setError('API Key is missing. Please add a key.');
-      setIsKeyReady(false);
-      return;
-    }
 
     setIsLoading(true);
     setError(null);
@@ -238,24 +105,18 @@ const App: React.FC = () => {
     try {
       const base64Image = await fileToBase64(imageFile);
       const mimeType = imageFile.type;
-      const result = await extractContentFromImage(base64Image, mimeType, activeApiKey);
+      // The service now uses process.env.API_KEY directly
+      const result = await extractContentFromImage(base64Image, mimeType);
       setConvertedItems(result.items);
       setHeaderText(result.headerText);
       setFooterText(result.footerText);
-      setApiKeyError(null);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       
-      const isApiKeyError = errorMessage.includes('API key not valid') || 
-                            errorMessage.includes('API key is not available') ||
-                            /API key (.*?) not found/.test(errorMessage) ||
-                            errorMessage.includes('provide one');
-
-      if (isApiKeyError) {
-          // Do not automatically clear the key from storage, just prompt the user.
-          setError(null);
-          setApiKeyError("Authentication failed. The API key provided is invalid or expired.");
-          setIsKeyReady(false);
+      // Handle specific AI Studio error where key might be lost or invalid
+      if (errorMessage.includes("Requested entity was not found") && isAistudioEnv) {
+          setNeedsKeySelection(true);
+          setError("Session expired or invalid key. Please select your API key again.");
       } else {
           setError(errorMessage);
       }
@@ -263,12 +124,12 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [imageFile, activeApiKey]);
+  }, [imageFile, isAistudioEnv]);
 
   const generatePdfDoc = useCallback((): jsPDF => {
     const doc = new jsPDF();
 
-    const fontMap = {
+    const fontMap: Record<string, string> = {
       sans: 'helvetica',
       serif: 'times',
       mono: 'courier',
@@ -410,37 +271,28 @@ const App: React.FC = () => {
 
   const hasContent = convertedItems.length > 0 || !!headerText || !!footerText;
 
-  if (!isKeyReady) {
-    return (
-        <ApiKeySelectionScreen 
-            onSelect={handleSelectKey} 
-            onSave={handleSaveKey} 
-            isManualMode={!isAistudioEnv} 
-            errorMessage={apiKeyError} 
-            hasExistingKey={!!activeApiKey}
-            onCancel={handleCancelKeyUpdate}
-        />
-    );
+  // If in AI Studio and no key selected, show selection screen
+  if (needsKeySelection) {
+      return (
+        <div className="min-h-screen bg-slate-900 font-sans flex flex-col items-center justify-center p-4 text-center">
+            <div className="max-w-md w-full bg-slate-800 p-8 rounded-lg shadow-2xl border border-slate-700">
+                <Header />
+                <p className="text-slate-400 my-6">
+                    Please select a Google Cloud Project or API Key to start converting your handwritten notes.
+                </p>
+                <button
+                    onClick={handleConnectKey}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 text-lg shadow-lg shadow-indigo-600/30"
+                >
+                    Get Started
+                </button>
+            </div>
+        </div>
+      );
   }
-
 
   return (
     <div className="min-h-screen bg-slate-900 font-sans flex flex-col items-center p-4 sm:p-6 lg:p-8 relative">
-        {/* API Key Change Button */}
-        {!isAistudioEnv && (
-            <div className="absolute top-4 right-4 z-10">
-                <button 
-                    onClick={handleRequestKeyChange}
-                    className="text-xs sm:text-sm text-slate-400 hover:text-white bg-slate-800/50 hover:bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-full transition-colors flex items-center gap-2"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11.536 9.636 11.536 9.636 10.586 8.686a2 2 0 00-2.828 0L6 10.414V13h2.828l8.757-8.757z" />
-                    </svg>
-                    API Key
-                </button>
-            </div>
-        )}
-
       <div className="w-full max-w-4xl mx-auto">
         <Header />
         <main className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8">
